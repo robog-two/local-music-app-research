@@ -1,0 +1,9 @@
+.venv/
+models/
+.git/
+*.txt
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
