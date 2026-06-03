@@ -2,41 +2,35 @@
 set -euo pipefail
 
 if [ -z "${1:-}" ]; then
-    echo "Usage: ./run.sh <audio_file> [model_size]"
-    echo "Model sizes: tiny, base, small, medium, large-v3, turbo (default)"
+    echo "Usage: ./run.sh <audio_file>"
     exit 1
 fi
 
 AUDIO_FILE=$(realpath "$1")
-MODEL_SIZE="${2:-turbo}"
 AUDIO_DIR=$(dirname "$AUDIO_FILE")
 AUDIO_NAME=$(basename "$AUDIO_FILE")
-MODELS_DIR="$(cd "$(dirname "$0")" && pwd)/models"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MODELS_DIR="$SCRIPT_DIR/models"
 
 mkdir -p "$MODELS_DIR"
 
-# Build image
-echo "Building image..."
-docker build -t whisper-local "$(dirname "$0")"
+# === PHASE 1: Setup (host machine, network allowed) ===
+echo "Downloading model (host phase, network allowed)..."
+python3 "$SCRIPT_DIR/setup_model.py"
 
-# Download model once if not already present (network allowed only here)
-if [ -z "$(ls -A "$MODELS_DIR")" ]; then
-    echo "Downloading model '$MODEL_SIZE' (one-time setup, network allowed)..."
-    docker run --rm \
-        -v "$MODELS_DIR":/app/models \
-        whisper-local \
-        python -c "
-from faster_whisper import WhisperModel
-WhisperModel('$MODEL_SIZE', device='cpu', compute_type='int8', download_root='/app/models')
-print('Model downloaded.')
-"
-fi
+# === PHASE 2: Build container (no network needed, model is mounted) ===
+echo "Building container..."
+docker build -t whisper-local "$SCRIPT_DIR"
 
-# Transcribe with no network access
-echo "Transcribing '$AUDIO_NAME' (network disabled)..."
+# === PHASE 3: Transcribe (container, network fully disabled) ===
+# --network none removes every network interface from the container (only
+# loopback remains), so neither the model nor any third-party library can
+# reach the internet. The model is mounted read-only; only the audio
+# directory is writable, for the transcript output.
+echo "Transcribing '$AUDIO_NAME' (container phase, network blocked)..."
 docker run --rm \
     --network none \
     -v "$AUDIO_DIR":/app/audio \
-    -v "$MODELS_DIR":/app/models \
+    -v "$MODELS_DIR":/app/models:ro \
     whisper-local \
-    "/app/audio/$AUDIO_NAME" "$MODEL_SIZE"
+    "/app/audio/$AUDIO_NAME"

@@ -1,26 +1,43 @@
 import os
-import subprocess
 import sys
 
-MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+# Resolve paths relative to this script so it works in the container (/app)
+# and on the host alike.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+MODEL_DIR = os.path.join(MODELS_DIR, "large-v3-turbo")
+
+# Defense in depth. The container already runs with `--network none`, which
+# physically removes all network access. These flags additionally guarantee
+# that huggingface_hub / transformers never attempt to reach the network,
+# even if the container hardening were ever weakened.
+os.environ["HF_HOME"] = MODELS_DIR
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
+from faster_whisper import WhisperModel
 
 
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package], stdout=subprocess.DEVNULL)
+def transcribe(audio_path: str):
+    if not os.path.isdir(MODEL_DIR):
+        sys.exit(
+            f"Model not found at {MODEL_DIR}.\n"
+            "Run ./run.sh, which downloads the model on the host before the "
+            "offline container starts."
+        )
 
-
-try:
-    from faster_whisper import WhisperModel
-except ImportError:
-    print("Installing faster-whisper...")
-    install("faster-whisper")
-    from faster_whisper import WhisperModel
-
-
-def transcribe(audio_path: str, model_size: str = "turbo"):
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    print(f"Loading model '{model_size}'...")
-    model = WhisperModel(model_size, device="cpu", compute_type="int8", download_root=MODELS_DIR)
+    print("Loading model 'large-v3-turbo' (local files, offline)...")
+    # Passing a local directory makes faster-whisper load the model files
+    # directly and bypass the HuggingFace Hub entirely -- no cache lookup and
+    # no network code path is ever taken. local_files_only=True is a redundant
+    # safeguard in case the path handling ever changes upstream.
+    model = WhisperModel(
+        MODEL_DIR,
+        device="cpu",
+        compute_type="int8",
+        local_files_only=True,
+    )
 
     print(f"Transcribing: {audio_path}")
     segments, info = model.transcribe(
@@ -46,10 +63,7 @@ def transcribe(audio_path: str, model_size: str = "turbo"):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python transcribe.py <audio_file> [model_size]")
-        print("Model sizes: tiny, base, small, medium, large-v3, turbo (default)")
+        print("Usage: python transcribe.py <audio_file>")
         sys.exit(1)
 
-    audio_file = sys.argv[1]
-    model = sys.argv[2] if len(sys.argv) > 2 else "turbo"
-    transcribe(audio_file, model)
+    transcribe(sys.argv[1])
