@@ -1,0 +1,17 @@
+;; macOS Seatbelt sandbox profile for offline transcription.
+;;
+;; Purpose: run the transcription pipeline (ffmpeg + whisper-cli) with NO
+;; network access whatsoever, so the confidential interview audio being
+;; processed cannot leave this machine. This is the native analog of the
+;; Docker `--network none` jail used by the previous implementation.
+;;
+;; `(allow default)` permits normal local operation -- reading the audio and
+;; model, writing the transcript, and talking to the GPU (Metal uses IOKit /
+;; Mach IPC, which is NOT network). `(deny network*)` then removes every form
+;; of network access (outbound, inbound, bind). The later rule wins.
+
+(version 1)
+
+(allow default)
+
+(deny network*)
